@@ -60,15 +60,8 @@ class PyTorchVarlenAttentionBackend(FlashAttentionBackend):
 
     @staticmethod
     def get_builder_cls():
-        # Report UNIFORM_SINGLE_TOKEN_DECODE cudagraph support instead of the FA3
-        # builder's ALWAYS. Our varlen forward bakes per-step cu_seqlens /
-        # max_query_len into the captured graph, so a FULL graph over a mixed
-        # prefill+decode batch replays stale offsets -> NaN (#3709); only
-        # query_len==1 decode is safe to capture. This keeps FULL_DECODE_ONLY
-        # valid, auto-downgrades FULL to FULL_DECODE_ONLY (instead of capturing the
-        # broken mixed graph), and allows PIECEWISE (attention runs eager).
         class PyTorchVarlenAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
-            _cudagraph_support = AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
+            _cudagraph_support = AttentionCGSupport.ALWAYS
 
         return PyTorchVarlenAttentionMetadataBuilder
 
@@ -182,7 +175,9 @@ class PyTorchVarlenAttentionImpl(FlashAttentionImpl):
 
         cu_seqlens_q = attn_metadata.query_start_loc
         seqused_k = attn_metadata.seq_lens
-        max_seqlen_q = attn_metadata.max_query_len
+        # Pin max_seqlen_q to the total token count for safe cudagraph capture and use
+        # the linearize FA3 combine kernel to preserve performance.
+        max_seqlen_q = num_actual_tokens
         max_seqlen_k = attn_metadata.max_seq_len
         block_table = attn_metadata.block_table
 
